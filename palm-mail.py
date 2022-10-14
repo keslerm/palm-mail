@@ -138,12 +138,6 @@ def clean(string):
 
 
 def sync():
-    # remove existing MailDB file
-    try:
-        os.remove("MailDB.pdb")
-    except:
-        None
-
     # remove entries for now
     clearDatabase()
 
