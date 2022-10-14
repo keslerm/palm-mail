@@ -2,9 +2,21 @@ from imapclient import IMAPClient
 import os, sys, argparse, subprocess
 import sqlite3
 import email.parser
+import smtplib
 from email import policy
+from smtplib import SMTP_SSL
+from email.message import EmailMessage
 
 db = sqlite3.connect("email.db")
+
+# Hardcode the default category list.
+CATEGORIES = {
+    "Inbox": 0,
+    "Outbox": 1,
+    "Deleted": 2,
+    "Filed": 3,
+    "Draft": 4,
+}
 
 
 def addressString(entry):
@@ -26,7 +38,8 @@ def setupDatabase():
     subject varchar,
     body varchar,
     timestamp text,
-    is_read bool
+    is_read bool,
+    category int
   ); """
 
     cur = db.cursor()
@@ -137,6 +150,34 @@ def clean(string):
     return string.encode("ascii", "ignore").decode()
 
 
+def send():
+    # check for outbox emailsgg
+    cur = db.cursor()
+
+    rows = cur.execute(
+        "select id, from_email, to_email, subject, body from emails where category = 1"
+    )
+
+    with SMTP_SSL(host=os.environ.get("EMAIL_HOST"), port=465) as server:
+        server.login(os.environ.get("EMAIL_USERNAME"), os.environ.get("EMAIL_PASSWORD"))
+        server.set_debuglevel(1)
+        for row in rows.fetchall():
+            print(f"sending {row[0]}")
+            msg = EmailMessage()
+
+            msg["To"] = row[2]
+            msg["From"] = os.environ.get("EMAIL_USERNAME")
+            msg["Subject"] = row[3]
+            msg.set_content(row[4])
+            print(msg)
+
+            server.send_message(msg)
+            # remove from outbox
+            cur.execute("delete from emails where id = ?", (row[0],))
+
+        server.quit()
+
+
 def sync():
     # remove entries for now
     clearDatabase()
@@ -150,7 +191,7 @@ def sync():
     print("Caching in local database")
     for email in emails:
         cur.execute(
-            "insert into emails (id, from_email, to_email, subject, body, is_read, timestamp) values (?, ?, ?, ?, ?, ?, ?)",
+            "insert into emails (id, from_email, to_email, subject, body, is_read, timestamp, category) values (?, ?, ?, ?, ?, ?, ?, ?)",
             (
                 email["id"],
                 email["from"],
@@ -159,6 +200,7 @@ def sync():
                 email["body"],
                 email["is_read"],
                 email["timestamp"],
+                CATEGORIES["Inbox"],
             ),
         )
 
@@ -187,6 +229,8 @@ def main(argv):
         setupDatabase()
     elif args.command == "sync":
         sync()
+    elif args.command == "send":
+        send()
     elif args.command == "test":
         fetchEmail()
 
